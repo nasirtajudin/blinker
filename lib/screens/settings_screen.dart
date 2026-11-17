@@ -352,7 +352,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void _openLocation() {
     final ctrl = TextEditingController(
         text: (BlStore.prefs['location'] ?? '') as String);
-    showBlModal(context, builder: (ctx) => _LocationSheet(ctrl))
+    showBlModal(context, (ctx) => _LocationSheet(ctrl))
         .then((_) {
       ctrl.dispose();
       if (mounted) setState(() {});
@@ -364,7 +364,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         .fold<num>(0, (a, p) => a + ((p['size'] as num?) ?? 0));
     showBlModal(
       context,
-      builder: (ctx) => BlModalCard(
+      (ctx) => BlModalCard(
         pillIcon: 'trash',
         pillLabel: 'Storage',
         title: 'Clear partial files?',

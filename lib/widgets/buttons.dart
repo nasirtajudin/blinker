@@ -124,7 +124,7 @@ class BlDot extends StatelessWidget {
         decoration: BoxDecoration(
           shape: BoxShape.circle,
           color: color,
-          boxShadow: [BoxShadow(color: color.withValues(alpha: 0.27), blurRadius: 9)],
+          boxShadow: [BoxShadow(color: color.withOpacity(0.27), blurRadius: 9)],
         ),
       );
 }
