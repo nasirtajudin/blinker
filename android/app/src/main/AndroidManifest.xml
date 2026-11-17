@@ -69,5 +69,7 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
-    </application>
+        <service android:name=".engine.SessionService" android:exported="false" android:foregroundServiceType="connectedDevice"/>
+</application>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE"/>
 </manifest>
