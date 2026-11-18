@@ -61,6 +61,7 @@ class SessionManager(private val context: Context, private val bus: EngineBus) {
     @Volatile private var active = false
     @Volatile private var fast = true
     @Volatile private var sender = false
+    @Volatile private var keepAwake = true
     @Volatile private var phase = Phase.IDLE
     @Volatile private var creds: HotspotManager.Creds? = null
 
@@ -84,9 +85,10 @@ class SessionManager(private val context: Context, private val bus: EngineBus) {
 
     // ------------------------------------------------------------- sender
 
-    fun startSenderHotspot(mode: String) {
+    fun startSenderHotspot(mode: String, stayAwake: Boolean = true) {
         sender = true
         fast = mode != "normal"
+        keepAwake = stayAwake
         begin()
         checkPerms()
         // Public-API reality: no app can preset hotspot credentials on ANY
@@ -97,6 +99,11 @@ class SessionManager(private val context: Context, private val bus: EngineBus) {
         p2p.invitedFast = fast
         state(Phase.P2P_SEARCH)
         p2p.start(sender = true)
+        // Waterfall step (1): receivers on the SAME router are found over
+        // the existing LAN (zero prompts) - browse alongside the P2P search
+        // so the radar can offer both. The receiver's startReceiver already
+        // advertises _blinker._tcp.
+        mdns.browse()
     }
 
     fun startSenderLan() {
@@ -122,8 +129,9 @@ class SessionManager(private val context: Context, private val bus: EngineBus) {
 
     // ------------------------------------------------------------ receiver
 
-    fun startReceiver() {
+    fun startReceiver(stayAwake: Boolean = true) {
         sender = false
+        keepAwake = stayAwake
         begin()
         checkPerms()
         // LAN visibility (method 1) - works with zero permissions.
@@ -331,7 +339,12 @@ class SessionManager(private val context: Context, private val bus: EngineBus) {
             setReferenceCounted(false)
             acquire()
         }
-        bus.activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        // Settings > Keep screen awake during transfer.
+        if (keepAwake) {
+            bus.activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            bus.activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
     }
 
     private fun releaseLocks() {

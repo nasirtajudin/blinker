@@ -8,6 +8,7 @@ import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Environment
+import android.provider.DocumentsContract
 import android.provider.Settings
 import org.json.JSONObject
 import java.io.File
@@ -192,6 +193,71 @@ class TransferManager(
                 )
             )
         }
+    }
+
+    // ------------------------------------------------------- phase 4 misc
+
+    /**
+     * Opens the folder a finished transfer saved into, in the system Files /
+     * Documents UI. Only public-storage paths can be shown there; the app's
+     * own external dir is not reachable for third-party callers on 11+, so
+     * the caller (Dart) shows the real path instead. Result is reported,
+     * never guessed: {opened, reason?, dir}.
+     */
+    fun openFolder(dir: String?): JSONObject {
+        fun j(opened: Boolean, reason: String?): JSONObject = JSONObject()
+            .put("opened", opened)
+            .put("reason", reason ?: JSONObject.NULL)
+            .put("dir", dir ?: JSONObject.NULL)
+        val path = dir?.trim()?.takeIf { it.isNotEmpty() } ?: return j(false, "no_dir")
+        val f = File(path)
+        if (!f.exists()) return j(false, "missing")
+        val publicRoot = Environment.getExternalStorageDirectory().absolutePath
+        if (!path.startsWith(publicRoot)) return j(false, "app_dir")
+        val rel = path.removePrefix(publicRoot).trim('/')
+        val docUri = DocumentsContract.buildDocumentUri(
+            "com.android.externalstorage.documents", "primary:$rel")
+        val intent = Intent(Intent.ACTION_VIEW)
+            .setDataAndType(docUri, DocumentsContract.Document.MIME_TYPE_DIR)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        val a = bus.activity ?: return j(false, "no_activity")
+        return try {
+            a.startActivity(intent)
+            j(true, null)
+        } catch (t: Throwable) {
+            j(false, "no_files_app")
+        }
+    }
+
+    /**
+     * Deletes every "<name>.bpart" partial under BOTH possible roots (the
+     * storage grant may have changed since the partials were written).
+     * Returns {freed, files}. Completed files are never touched.
+     */
+    fun clearPartials(location: String?): JSONObject {
+        var freed = 0L
+        var count = 0
+        val roots = HashSet<File>()
+        roots.add(resolveRoot(location))
+        // The alternate root too (public <-> app dir switch after a grant).
+        @Suppress("DEPRECATION")
+        roots.add(File(Environment.getExternalStorageDirectory(),
+            TransferCore.sanitizeRel(location?.trim()?.trim('/')?.takeIf { it.isNotEmpty() }
+                ?: DEFAULT_LOCATION)))
+        for (root in roots) {
+            runCatching {
+                root.walkTopDown()
+                    .filter { it.isFile && it.name.endsWith(".bpart") }
+                    .forEach {
+                        val len = it.length()
+                        if (it.delete()) {
+                            freed += len
+                            count++
+                        }
+                    }
+            }
+        }
+        return JSONObject().put("freed", freed).put("files", count)
     }
 
     // -------------------------------------------------------------- emit

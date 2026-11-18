@@ -51,6 +51,9 @@
 //   transfer:cancelled{id,direction,reason,bytes,totalBytes,filesDone,
 //        files:[{name,done,size}]?}          -> receiver keeps .bpart partials
 //   transfer:failed{id?,direction,stage,reason}
+//   -- phase 4 ----------------------------------------------------------
+//   picker:result{files:[{uri,name,size}]}   -> sender stages + starts
+//   picker:cancelled{reason?}                -> back to idle (or keep link)
 
 library;
 
@@ -123,11 +126,14 @@ class Engine {
       Map<String, dynamic>.from(jsonDecode(await _call('diag.hardware') as String) as Map);
 
   // -- sessions ------------------------------------------------------------------
-  /// mode: 'fast' (5GHz) | 'normal' (2.4GHz)
-  static Future<void> startSenderHotspot({required String mode}) =>
-      _call('session.startSenderHotspot', {'mode': mode});
+  /// mode: 'fast' (5GHz) | 'normal' (2.4GHz); awake = the Keep-screen-awake
+  /// preference from Settings (native FLAG_KEEP_SCREEN_ON).
+  static Future<void> startSenderHotspot(
+          {required String mode, bool awake = true}) =>
+      _call('session.startSenderHotspot', {'mode': mode, 'awake': awake});
   static Future<void> startSenderLan() => _call('session.startSenderLan');
-  static Future<void> startReceiver() => _call('session.startReceiver');
+  static Future<void> startReceiver({bool awake = true}) =>
+      _call('session.startReceiver', {'awake': awake});
   static Future<void> connectPeer(String peerId) =>
       _call('session.p2pConnect', {'peerId': peerId});
   static Future<void> respondInvite({required bool accept, bool preferNormal = false}) =>
@@ -162,4 +168,25 @@ class Engine {
 
   /// Opens the system "All files access" page (real system screen, 11+).
   static Future<void> openAllFilesAccess() => _call('storage.openAllFiles');
+
+  // -- phase 4: picker, folder view, partials -------------------------------
+  /// The system document picker (its own UI, untouched). The answer arrives
+  /// as picker:result / picker:cancelled events.
+  static Future<void> openPicker() => _call('picker.open');
+
+  /// Releases the persistable URI grants of the staged pick.
+  static Future<void> releasePicker() => _call('picker.release');
+
+  /// {opened, reason?, dir} - opens the save folder in the system Files UI
+  /// when possible; reason=app_dir means the path is the app's own dir.
+  static Future<Map<String, dynamic>> openFolder(String dir) async =>
+      Map<String, dynamic>.from(
+          jsonDecode(await _call('folder.open', {'dir': dir}) as String) as Map);
+
+  /// Deletes every "*.bpart" partial under both possible roots.
+  /// Returns {freed, files}.
+  static Future<Map<String, dynamic>> clearPartials({String? location}) async =>
+      Map<String, dynamic>.from(jsonDecode(
+          await _call('storage.clearPartials', {'location': location}) as String)
+          as Map);
 }

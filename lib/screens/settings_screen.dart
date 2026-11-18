@@ -3,6 +3,7 @@ import '../core/format.dart';
 import '../core/icons.dart';
 import '../core/theme.dart';
 import '../data/store.dart';
+import '../engine/engine_bridge.dart' as bridge;
 import '../services/engine.dart';
 import '../widgets/buttons.dart';
 import '../widgets/modal.dart';
@@ -375,28 +376,77 @@ class _SettingsScreenState extends State<SettingsScreen> {
               primary: false, onTap: () => Navigator.of(ctx).pop()),
           BlButton('Clear partials', onTap: () {
             Navigator.of(ctx).pop();
-            BlStore.partial = [];
-            BlStore.save();
-            if (mounted) setState(() {});
-            BlToast.show(
-                context, 'Partial files cleared. Completed files are safe.');
+            _clearPartials();
           }),
         ],
       ),
     );
   }
+
+  /// Deletes the real "*.bpart" files on disk (both possible roots),
+  /// then clears the Dart-side records.
+  Future<void> _clearPartials() async {
+    var freed = 0;
+    var files = 0;
+    try {
+      final res = await bridge.Engine.clearPartials(
+          location: (BlStore.prefs['location'] ?? '') as String);
+      freed = (res['freed'] as num?)?.toInt() ?? 0;
+      files = (res['files'] as num?)?.toInt() ?? 0;
+    } catch (_) {}
+    BlStore.partial = [];
+    BlStore.save();
+    if (mounted) setState(() {});
+    if (!mounted) return;
+    BlToast.show(
+        context,
+        files > 0
+            ? 'Cleared $files partial${files == 1 ? '' : 's'} · ${fmtBytes(freed)} freed'
+            : 'No partial files on disk. Completed files are safe.');
+  }
 }
 
-class _LocationSheet extends StatelessWidget {
+/// Save-location sheet: path input + the REAL resolved storage state
+/// (public Downloads vs the app's own dir) + the system All-Files page.
+class _LocationSheet extends StatefulWidget {
   final TextEditingController controller;
   const _LocationSheet(this.controller);
 
+  @override
+  State<_LocationSheet> createState() => _LocationSheetState();
+}
+
+class _LocationSheetState extends State<_LocationSheet> {
+  Map<String, dynamic>? _state;
+  bool _probing = true;
+  String _probedPath = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _probe();
+  }
+
+  Future<void> _probe() async {
+    final p = widget.controller.text.trim();
+    if (_probing && p == _probedPath) return;
+    _probedPath = p;
+    try {
+      final st = await bridge.Engine.storageState(location: p);
+      if (mounted) setState(() => _state = st);
+    } catch (_) {
+      if (mounted) setState(() => _state = null);
+    } finally {
+      if (mounted) setState(() => _probing = false);
+    }
+  }
+
   void _save(BuildContext context) {
-    final p = controller.text.trim().replaceAll('\\', '/');
+    final p = widget.controller.text.trim().replaceAll('\\', '/');
     if (p.isEmpty ||
         p.contains('..') ||
         RegExp(r'[<>\x00-\x1f]').hasMatch(p)) {
-      BlToast.show(context, 'Enter a valid folder path without “..”.');
+      BlToast.show(context, 'Enter a valid folder path without \u201c..\u201d.');
       return;
     }
     BlStore.set('location', p.endsWith('/') ? p : '$p/');
@@ -405,6 +455,8 @@ class _LocationSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final sandboxed = _state?['sandboxed'] == true;
+    final canGrant = _state?['allFilesAccessAvailable'] == true;
     return BlModalCard(
       pillIcon: 'folder',
       pillLabel: 'Save location',
@@ -417,7 +469,7 @@ class _LocationSheet extends StatelessWidget {
           Text('FOLDER PATH', style: ts(11, color: BlColors.muted)),
           const SizedBox(height: 7),
           TextField(
-            controller: controller,
+            controller: widget.controller,
             autofocus: true,
             maxLength: 120,
             style: ts(13),
@@ -436,7 +488,49 @@ class _LocationSheet extends StatelessWidget {
                       const BorderSide(color: Color(0xFFD64B6E))),
             ),
             onSubmitted: (_) => _save(context),
+            onChanged: (_) => _probe(),
           ),
+          const SizedBox(height: 13),
+          if (_probing)
+            Text('Checking this device\u2019s storage\u2026',
+                style: ts(10, color: BlColors.muted))
+          else if (_state != null) ...[
+            Row(
+              children: [
+                BlIcon('folder', size: 12, color: BlColors.muted),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text('Resolves to ${_state!['saveDir']}',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: ts(9, color: BlColors.muted)),
+                ),
+                const SizedBox(width: 8),
+                if (sandboxed)
+                  const BlPill('App folder')
+                else
+                  const BlPill('Public storage', success: true),
+              ],
+            ),
+            if (sandboxed) ...[
+              const SizedBox(height: 7),
+              Text(
+                'Without All-Files access, Android keeps received files inside bLinker\u2019s own folder.',
+                style: ts(9, color: BlColors.muted, h: 1.7),
+              ),
+              if (canGrant)
+                Padding(
+                  padding: const EdgeInsets.only(top: 10),
+                  child: BlTextButton('Grant All-Files access',
+                      icon: 'chevron',
+                      onTap: () {
+                    bridge.Engine.openAllFilesAccess();
+                    BlToast.show(context,
+                        'Allow bLinker on the system page, then come back.');
+                  }),
+                ),
+            ],
+          ],
         ],
       ),
       actions: [

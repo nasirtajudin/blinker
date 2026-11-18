@@ -9,8 +9,8 @@ import android.service.quicksettings.TileService
 
 /**
  * bLinker quick-settings tile (moved from the old kotlin/ source dir next to
- * the merged [MainActivity]; behaviour unchanged - Phase 5 gives it the real
- * "app open = active" session state).
+ * the merged [MainActivity]). Reads [MainActivity.isRunning] for the real
+ * "app open = active" session state.
  */
 class BlinkerTileService : TileService() {
 

@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'core/theme.dart';
 import 'data/store.dart';
-import 'services/engine.dart';
 import 'screens/onboarding_screen.dart';
 import 'screens/shell.dart';
+import 'services/engine.dart';
+import 'services/session.dart';
 
 class BlinkerApp extends StatefulWidget {
   const BlinkerApp({super.key});
@@ -15,6 +16,8 @@ class _BlinkerAppState extends State<BlinkerApp> {
   late final Future<void> _boot = () async {
     await BlStore.load();
     await BlEngine.warm();
+    // Phase 4: subscribe to every engine event exactly once, app lifetime.
+    BlSession.I.init();
     if (!BlEngine.supports5GHz && BlStore.prefs['method'] == 'fast') {
       BlStore.set('method', 'normal');
     }

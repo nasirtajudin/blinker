@@ -35,6 +35,8 @@ class EngineBus private constructor(val appContext: Context) {
         private set
     lateinit var sessionManager: SessionManager
         private set
+    lateinit var pickerManager: PickerManager
+        private set
     @Volatile private var wired = false
 
     fun on(method: String, handler: (MethodCall, MethodChannel.Result) -> Unit) {
@@ -88,6 +90,7 @@ class EngineBus private constructor(val appContext: Context) {
 
     fun dispatchPanelResult(requestCode: Int, resultCode: Int, data: Intent?) {
         sessionManager.join.onPanelResult(requestCode, resultCode, data)
+        pickerManager.onPanelResult(requestCode, resultCode, data)
     }
 
     companion object {
@@ -104,6 +107,7 @@ class EngineBus private constructor(val appContext: Context) {
                 bus.wired = true
                 bus.permManager = PermissionsManager(bus)
                 bus.sessionManager = SessionManager(activity.applicationContext, bus)
+                bus.pickerManager = PickerManager(activity.applicationContext, bus)
                 registerMethods(bus)
             }
             bus.attach(activity, flutter)
@@ -136,11 +140,17 @@ class EngineBus private constructor(val appContext: Context) {
             bus.on("diag.hardware") { _, result -> result.success(session.hardwareProbe().toString()) }
 
             // ---- sessions ----------------------------------------------------
+            // 'awake' carries the Keep-screen-awake preference (Settings).
             bus.on("session.startSenderHotspot") { call, result ->
-                session.startSenderHotspot(call.argument<String>("mode") ?: "fast"); result.success(null)
+                session.startSenderHotspot(
+                    call.argument<String>("mode") ?: "fast",
+                    call.argument<Boolean>("awake") ?: true
+                ); result.success(null)
             }
             bus.on("session.startSenderLan") { _, result -> session.startSenderLan(); result.success(null) }
-            bus.on("session.startReceiver") { _, result -> session.startReceiver(); result.success(null) }
+            bus.on("session.startReceiver") { call, result ->
+                session.startReceiver(call.argument<Boolean>("awake") ?: true); result.success(null)
+            }
             bus.on("session.p2pConnect") { call, result ->
                 session.connectPeer(call.argument<String>("peerId") ?: ""); result.success(null)
             }
@@ -184,6 +194,18 @@ class EngineBus private constructor(val appContext: Context) {
             }
             bus.on("storage.openAllFiles") { _, result ->
                 session.transfer.openAllFilesAccess(); result.success(null)
+            }
+
+            // ---- phase 4: picker, folder view, partials --------------------
+            bus.on("picker.open") { _, result -> bus.pickerManager.open(); result.success(null) }
+            bus.on("picker.release") { _, result ->
+                bus.pickerManager.releaseAll(); result.success(null)
+            }
+            bus.on("folder.open") { call, result ->
+                result.success(session.transfer.openFolder(call.argument<String>("dir")).toString())
+            }
+            bus.on("storage.clearPartials") { call, result ->
+                result.success(session.transfer.clearPartials(call.argument<String>("location")).toString())
             }
         }
     }

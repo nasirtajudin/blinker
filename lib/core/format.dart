@@ -23,6 +23,31 @@ String fmtDuration(num s) {
   return '${n}s';
 }
 
+/// Live-transfer formatter: takes BYTES (engine events are byte-based),
+/// unlike [fmtSize] which takes the history's megabyte convention.
+String fmtBytes(num b) {
+  if (b >= 1099511627776) return '${(b / 1099511627776).toStringAsFixed(2)} TB';
+  if (b >= 1073741824) return '${(b / 1073741824).toStringAsFixed(2)} GB';
+  if (b >= 1048576) {
+    final mb = b / 1048576;
+    return '${mb.truncateToDouble() == mb ? mb.toStringAsFixed(0) : mb.toStringAsFixed(1)} MB';
+  }
+  if (b >= 1024) return '${(b / 1024).toStringAsFixed(0)} KB';
+  return '${b < 1 ? 1 : b.round()} B';
+}
+
+/// File-type icon (bLinker icon names) from a file name's extension.
+String fileIconFor(String name) {
+  final ext = name.contains('.') ? name.split('.').last.toLowerCase() : '';
+  if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'bmp', 'dng']
+      .contains(ext)) return 'photo';
+  if (['mp4', 'mkv', 'mov', 'avi', 'webm', '3gp'].contains(ext)) return 'video';
+  if (['mp3', 'm4a', 'flac', 'wav', 'ogg', 'aac', 'opus'].contains(ext)) {
+    return 'music';
+  }
+  return 'file';
+}
+
 String initials(String name) => name
     .split(RegExp(r"[\s'’]+"))
     .where((x) => x.isNotEmpty)

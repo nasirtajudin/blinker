@@ -1,12 +1,25 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
+import '../core/format.dart';
 import '../core/icons.dart';
 import '../core/theme.dart';
+import '../services/session.dart' show BlPeer;
+import 'pressable.dart';
 
 class BlRadar extends StatefulWidget {
   final String symbol;
   final double scale;
-  const BlRadar({super.key, this.symbol = 'send', this.scale = 1});
+
+  /// Nearby bLinker devices (Phase 4). When non-empty AND [onPeerTap] is
+  /// given, the decorative satellites are replaced by tappable peer chips.
+  final List<BlPeer> peers;
+  final void Function(BlPeer peer)? onPeerTap;
+  const BlRadar(
+      {super.key,
+      this.symbol = 'send',
+      this.scale = 1,
+      this.peers = const [],
+      this.onPeerTap});
   @override
   State<BlRadar> createState() => _BlRadarState();
 }
@@ -65,11 +78,76 @@ class _BlRadarState extends State<BlRadar> with SingleTickerProviderStateMixin {
             BoxShadow(color: Color(0x40000000), blurRadius: 15),
           ],
         ),
-        child: Center(child: BlIcon(icon, size: 13, color: const Color(0xFFD98E9C))),
+        child: Center(
+            child: BlIcon(icon, size: 13, color: const Color(0xFFD98E9C))),
       );
+
+  /// Fixed satellite slots on the outer ring; deterministic per index.
+  static const List<(double top, double left)> _slots = [
+    (26, 168), // top right
+    (128, 14), // bottom left
+    (52, 10), // top left
+    (140, 178), // bottom right
+    (92, 0), // far left
+    (96, 200), // far right
+  ];
+
+  Widget _peerChip(BlPeer p) {
+    final lan = p.kind == 'lan';
+    return SizedBox(
+      width: 56,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: lan ? const Color(0xFF222A27) : const Color(0xFF2A1B22),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: BlColors.line),
+              boxShadow: const [
+                BoxShadow(color: Color(0x4D000000), blurRadius: 13),
+              ],
+            ),
+            child: Center(
+              child: lan
+                  ? BlIcon('wifi', size: 13, color: const Color(0xFFB0C5B6))
+                  : Text(initials(p.name),
+                      style: ts(11,
+                          w: 600, color: const Color(0xFFE990A1))),
+            ),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            p.name.length > 9 ? '${p.name.substring(0, 9)}…' : p.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: ts(8, color: const Color(0xFF9A8791)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  List<Widget> _peerSatellites() {
+    final shown = widget.peers.take(_slots.length).toList();
+    return [
+      for (int i = 0; i < shown.length; i++)
+        Positioned(
+          top: _slots[i].$1,
+          left: _slots[i].$2,
+          child: Pressable(
+            onTap: () => widget.onPeerTap?.call(shown[i]),
+            child: _peerChip(shown[i]),
+          ),
+        ),
+    ];
+  }
 
   @override
   Widget build(BuildContext context) {
+    final live = widget.onPeerTap != null && widget.peers.isNotEmpty;
     final radar = SizedBox(
       width: 248,
       height: 226,
@@ -122,18 +200,22 @@ class _BlRadarState extends State<BlRadar> with SingleTickerProviderStateMixin {
               ),
             ),
           ),
-          Positioned(
-            top: 32,
-            right: 41,
-            child: Transform.rotate(
-                angle: 13 * pi / 180, child: _satellite('photo')),
-          ),
-          Positioned(
-            bottom: 43,
-            left: 25,
-            child: Transform.rotate(
-                angle: -12 * pi / 180, child: _satellite('file')),
-          ),
+          if (live)
+            ..._peerSatellites()
+          else ...[
+            Positioned(
+              top: 32,
+              right: 41,
+              child: Transform.rotate(
+                  angle: 13 * pi / 180, child: _satellite('photo')),
+            ),
+            Positioned(
+              bottom: 43,
+              left: 25,
+              child: Transform.rotate(
+                  angle: -12 * pi / 180, child: _satellite('file')),
+            ),
+          ],
         ],
       ),
     );

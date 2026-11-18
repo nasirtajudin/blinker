@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../core/format.dart';
 import '../core/theme.dart';
 import '../data/store.dart';
+import '../engine/engine_bridge.dart' as bridge;
 import '../widgets/buttons.dart';
 import '../widgets/file_lines.dart';
 import '../widgets/page_header.dart';
@@ -40,6 +41,7 @@ class DetailScreen extends StatelessWidget {
     final recv = t['direction'] == 'receive';
     final peer = (t['peer'] as String?) ?? '';
     final avg = ((t['avg'] as num?) ?? 0).toStringAsFixed(1);
+    final savedDir = (t['dir'] as String?) ?? '';
 
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(25, 4, 25, 40),
@@ -142,8 +144,7 @@ class DetailScreen extends StatelessWidget {
                 icon: 'folder',
                 primary: false,
                 full: true,
-                onTap: () => BlToast.show(context,
-                    'The folder opens after your first real transfer.'),
+                onTap: () => _openFolder(context, savedDir),
               ),
             ),
         ],
@@ -152,6 +153,27 @@ class DetailScreen extends StatelessWidget {
   }
 
   Widget _div() => Container(height: 1, color: BlColors.line);
+
+  /// Phase 4: opens the save folder in the system Files UI; when the folder
+  /// lives in the app's own dir (no All-Files grant back then), the real
+  /// path is shown instead - never a guess.
+  Future<void> _openFolder(BuildContext context, String dir) async {
+    if (dir.isEmpty) {
+      BlToast.show(context, 'This transfer predates folder tracking.');
+      return;
+    }
+    try {
+      final res = await bridge.Engine.openFolder(dir);
+      if (!context.mounted) return;
+      if (res['opened'] == true) {
+        BlToast.show(context, 'Opened in Files');
+      } else {
+        BlToast.show(context, 'Saved in $dir');
+      }
+    } catch (_) {
+      if (context.mounted) BlToast.show(context, 'Saved in $dir');
+    }
+  }
 
   Widget _info(String k, String v) => Padding(
         padding: const EdgeInsets.symmetric(vertical: 14),
