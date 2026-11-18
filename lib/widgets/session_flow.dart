@@ -206,8 +206,7 @@ class _StandbyCard extends StatelessWidget {
     return _card(
       icon: 'receive',
       title: 'Visible as ${BlStore.name}',
-      body:
-          'Senders nearby can invite you. Keep bLinker open while you wait.',
+      body: 'Senders nearby can invite you. Keep bLinker open while you wait.',
       actions: [
         BlButton('Stop', primary: false, onTap: s.stop),
       ],
@@ -248,8 +247,7 @@ class _PhaseCard extends StatelessWidget {
       if (s.manualExpected)
         BlTextButton('Type the code', icon: 'lock', onTap: s.reopenJoinCard),
       if (s.joinTimedOut != null) ...[
-        BlTextButton('Try the join again',
-            icon: 'refresh', onTap: s.retryJoin),
+        BlTextButton('Try the join again', icon: 'refresh', onTap: s.retryJoin),
         BlTextButton('Open system panel',
             icon: 'chevron', onTap: s.openJoinPanel),
       ],
@@ -287,9 +285,11 @@ class _ManualCodeCard extends StatelessWidget {
       extra: Column(
         children: [
           const SizedBox(height: 15),
-          _codeRow(context, 'NETWORK', ssid, () => _copy(context, 'Network', ssid)),
+          _codeRow(
+              context, 'NETWORK', ssid, () => _copy(context, 'Network', ssid)),
           const SizedBox(height: 8),
-          _codeRow(context, 'PASSWORD', pass, () => _copy(context, 'Password', pass)),
+          _codeRow(context, 'PASSWORD', pass,
+              () => _copy(context, 'Password', pass)),
         ],
       ),
       actions: [
@@ -329,7 +329,8 @@ class _ManualCodeCard extends StatelessWidget {
             onTap: onCopy,
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-              child: Text('COPY', style: ts(9, w: 650, color: BlColors.pinkDeep)),
+              child:
+                  Text('COPY', style: ts(9, w: 650, color: BlColors.pinkDeep)),
             ),
           ),
         ],
@@ -390,8 +391,9 @@ class _ProgressCard extends StatelessWidget {
                   Container(color: const Color(0x14FFFFFF)),
                   FractionallySizedBox(
                     widthFactor: frac,
-                    child:
-                        Container(decoration: const BoxDecoration(gradient: blDockActiveGradient)),
+                    child: Container(
+                        decoration: const BoxDecoration(
+                            gradient: blDockActiveGradient)),
                   ),
                 ],
               ),
@@ -464,7 +466,8 @@ class _ResultCard extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: ts(12, w: 550)),
               ),
-              if (!cancelled) const BlPill('Verified', icon: 'check', success: true),
+              if (!cancelled)
+                const BlPill('Verified', icon: 'check', success: true),
             ],
           ),
           const SizedBox(height: 13),
@@ -510,7 +513,8 @@ class _DoneActions extends StatelessWidget {
           ),
         if (recv && dir.isNotEmpty && !cancelled) const SizedBox(width: 11),
         if (canSendMore) ...[
-          Expanded(child: BlButton('Send more', icon: 'send', onTap: s.sendMore)),
+          Expanded(
+              child: BlButton('Send more', icon: 'send', onTap: s.sendMore)),
           const SizedBox(width: 11),
         ],
         Expanded(child: BlButton('Done', primary: false, onTap: s.stop)),
@@ -560,7 +564,8 @@ BoxDecoration _box() => BoxDecoration(
       border: Border.all(color: const Color(0x0DFFFFFF)),
       borderRadius: BorderRadius.circular(26),
       boxShadow: const [
-        BoxShadow(color: Color(0x18000000), blurRadius: 28, offset: Offset(0, 10)),
+        BoxShadow(
+            color: Color(0x18000000), blurRadius: 28, offset: Offset(0, 10)),
       ],
     );
 
@@ -633,7 +638,8 @@ Future<void> showInviteModal(BuildContext context) {
           : 'They’re inviting you over a Normal (2.4GHz) link.',
       actions: [
         BlButton('Decline',
-            primary: false, onTap: () => _close(ctx, () => s.respondInvite(false))),
+            primary: false,
+            onTap: () => _close(ctx, () => s.respondInvite(false))),
         BlButton(
           acceptNormal ? 'Accept in Normal' : 'Accept',
           onTap: () => _close(
@@ -705,8 +711,8 @@ Future<void> showAcceptModal(BuildContext context) {
                 if (more > 0)
                   Padding(
                     padding: const EdgeInsets.only(top: 5),
-                    child:
-                        Text('and $more more…', style: ts(9, color: BlColors.muted)),
+                    child: Text('and $more more…',
+                        style: ts(9, color: BlColors.muted)),
                   ),
               ],
             ),
@@ -808,7 +814,8 @@ Future<void> showJoinTimeoutModal(BuildContext context) {
       actions: [
         BlButton('Try again',
             primary: false, onTap: () => _close(ctx, s.retryJoin)),
-        BlButton('Open system panel', onTap: () => _close(ctx, s.openJoinPanel)),
+        BlButton('Open system panel',
+            onTap: () => _close(ctx, s.openJoinPanel)),
       ],
     ),
   ).then((_) => Future<void>.value());
@@ -834,6 +841,44 @@ Future<void> showPermModal(BuildContext context) {
     ),
   ).then((_) {
     if (s.permMissing.isNotEmpty) s.dismissPerms();
+    return Future<void>.value();
+  });
+}
+
+/// Phase 5 radio card: the session is parked until Wi-Fi (and Location
+/// services) are on - both are required by Wi-Fi Direct discovery on real
+/// devices. Every button leads to a REAL system screen; the session resumes
+/// by itself the moment both radios report on.
+Future<void> showRadioModal(BuildContext context) {
+  final s = BlSession.I;
+  final wifiOff = s.radioBlocked.contains('wifi');
+  final locationOff = s.radioBlocked.contains('location');
+  final title = wifiOff && locationOff
+      ? 'Wi-Fi and Location are off.'
+      : (wifiOff ? 'Wi-Fi is off.' : 'Location is off.');
+  final body = wifiOff && locationOff
+      ? 'Finding and linking bLinker phones needs both radios. Android opens its own Wi-Fi panel and Location page - bLinker never imitates them.'
+      : (wifiOff
+          ? 'Nearby search needs the Wi-Fi adapter on. Android opens its own Wi-Fi panel - one real toggle.'
+          : 'Android hides nearby devices while Location is off - that is a system rule, not bLinker’s. The real Location page is one toggle away.');
+  return showBlModal(
+    context,
+    (ctx) => BlModalCard(
+      pillIcon: 'wifi',
+      pillLabel: 'Radios',
+      title: title,
+      body: body,
+      actions: [
+        BlButton('Not now',
+            primary: false, onTap: () => _close(ctx, s.dismissRadios)),
+        BlButton(locationOff ? 'Turn on Location' : 'Turn on Wi-Fi',
+            icon: 'chevron',
+            onTap: () =>
+                _close(ctx, locationOff ? s.enableLocation : s.enableWifi)),
+      ],
+    ),
+  ).then((_) {
+    if (s.radioBlocked.isNotEmpty) s.dismissRadios();
     return Future<void>.value();
   });
 }

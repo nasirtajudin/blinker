@@ -69,6 +69,7 @@ class _ShellState extends State<Shell> {
         'joinTimeout' => s.joinTimedOut != null,
         'perm' => s.permMissing.isNotEmpty,
         'band' => s.bandIssue != null,
+        'radio' => s.radioBlocked.isNotEmpty,
         _ => false,
       };
       if (valid) {
@@ -90,6 +91,9 @@ class _ShellState extends State<Shell> {
             break;
           case 'perm':
             f = showPermModal(context);
+            break;
+          case 'radio':
+            f = showRadioModal(context);
             break;
           default:
             f = showBandModal(context);

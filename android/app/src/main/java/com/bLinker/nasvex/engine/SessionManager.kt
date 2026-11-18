@@ -32,6 +32,7 @@ class SessionManager(private val context: Context, private val bus: EngineBus) {
 
     enum class Phase(val id: String) {
         IDLE("idle"),
+        NEEDS_RADIOS("needs_radios"),
         MDNS_SEARCH("mdns_search"),
         P2P_SEARCH("p2p_search"),
         INVITING("inviting"),
@@ -49,6 +50,8 @@ class SessionManager(private val context: Context, private val bus: EngineBus) {
     val join = JoinManager(context, bus)
     val p2p = P2pMessenger(context, bus)
     val mdns = MdnsBeacon(context, bus)
+    /** Phase 5 radio gate: Wi-Fi + Location must be ON before anything starts. */
+    val radio = RadioGuard(context, bus)
     private val tcpServer = TcpLink.Server(bus)
     private val tcpClient = TcpLink.Client(bus)
 
@@ -90,20 +93,23 @@ class SessionManager(private val context: Context, private val bus: EngineBus) {
         fast = mode != "normal"
         keepAwake = stayAwake
         begin()
-        checkPerms()
         // Public-API reality: no app can preset hotspot credentials on ANY
         // Android version, so the P2P exchange always carries a "manual"
         // join instruction; the system-generated SSID/pass arrive with
         // session:manual_code once the hotspot is up.
         creds = null
         p2p.invitedFast = fast
-        state(Phase.P2P_SEARCH)
-        p2p.start(sender = true)
-        // Waterfall step (1): receivers on the SAME router are found over
-        // the existing LAN (zero prompts) - browse alongside the P2P search
-        // so the radar can offer both. The receiver's startReceiver already
-        // advertises _blinker._tcp.
-        mdns.browse()
+        // Radio gate first (Phase 5): dead radios = empty radar, silently.
+        radio.gate {
+            checkPerms()
+            state(Phase.P2P_SEARCH)
+            p2p.start(sender = true)
+            // Waterfall step (1): receivers on the SAME router are found over
+            // the existing LAN (zero prompts) - browse alongside the P2P search
+            // so the radar can offer both. The receiver's startReceiver already
+            // advertises _blinker._tcp.
+            mdns.browse()
+        }
     }
 
     fun startSenderLan() {
@@ -133,19 +139,22 @@ class SessionManager(private val context: Context, private val bus: EngineBus) {
         sender = false
         keepAwake = stayAwake
         begin()
-        checkPerms()
-        // LAN visibility (method 1) - works with zero permissions.
-        tcpServer.listen(
-            onClient = {
-                p2p.teardown()
-                mdns.stop()
-                onLinkEstablished()
-            },
-            onFailed = { fail("tcp_listen", it) })
-        mdns.advertise(Device.name(context), TcpLink.PORT)
-        // P2P visibility (method 2 messenger).
-        p2p.start(sender = false)
-        state(Phase.STANDBY)
+        // Radio gate first (Phase 5): P2P visibility needs the same radios.
+        radio.gate {
+            checkPerms()
+            // LAN visibility (method 1) - works with zero permissions.
+            tcpServer.listen(
+                onClient = {
+                    p2p.teardown()
+                    mdns.stop()
+                    onLinkEstablished()
+                },
+                onFailed = { fail("tcp_listen", it) })
+            mdns.advertise(Device.name(context), TcpLink.PORT)
+            // P2P visibility (method 2 messenger).
+            p2p.start(sender = false)
+            state(Phase.STANDBY)
+        }
     }
 
     /** Receiver's answer to the bLinker invite card. */
@@ -177,12 +186,30 @@ class SessionManager(private val context: Context, private val bus: EngineBus) {
 
     fun stop(silent: Boolean = false) {
         active = false
+        radio.cancel()
         transfer.cancel()
         reset()
         releaseLocks()
         stopStats()
         SessionService.stop(context)
         if (!silent) state(Phase.IDLE) else phase = Phase.IDLE
+    }
+
+    /** MainActivity.onResume: coming back from a radio panel = re-check now. */
+    fun onAppResumed() {
+        radio.recheck()
+    }
+
+    /**
+     * A permission grant just landed (or radios came back): discovery was
+     * launched before the grant in that flow, so re-fire it immediately
+     * instead of waiting for the 25s rediscover cycle.
+     */
+    fun retryDiscovery() {
+        if (!active) return
+        val early = phase == Phase.P2P_SEARCH || phase == Phase.STANDBY ||
+            phase == Phase.MDNS_SEARCH
+        if (early) p2p.kick()
     }
 
     // ---------------------------------------------------------- internals
@@ -249,6 +276,12 @@ class SessionManager(private val context: Context, private val bus: EngineBus) {
         }
         p2p.onRejected = { fail("rejected", "The other side declined") }
         p2p.onError = { fail("p2p_exchange", it) }
+        p2p.onConnectFailed = {
+            // The picked device did not answer the P2P connect: back to the
+            // radar instead of sitting in "inviting" forever (Phase 5).
+            state(Phase.P2P_SEARCH)
+            p2p.kick()
+        }
     }
 
     private fun wireHotspotCallbacks() {

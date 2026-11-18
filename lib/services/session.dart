@@ -58,6 +58,8 @@ class BlSession extends ChangeNotifier {
   Map<String, dynamic>? joinFallback; // join:manual_needed (legacy)
   Map<String, dynamic>? joinTimedOut; // join:timeout
   List<String> permMissing = []; // session:perm_missing -> explainer
+  List<String> radioBlocked = []; // radio:blocked -> 'wifi' | 'location'
+  Map<String, dynamic>? p2pIssue; // p2p:unavailable - radar hint
   Map<String, dynamic>? bandIssue; // band_unavailable / downgrade_request
 
   List<Map<String, dynamic>> staged = []; // picked files awaiting the link
@@ -89,7 +91,8 @@ class BlSession extends ChangeNotifier {
       _qJoin = false,
       _qJoinTimeout = false,
       _qPerm = false,
-      _qBand = false;
+      _qBand = false,
+      _qRadio = false;
 
   // -- lifecycle -------------------------------------------------------------
 
@@ -205,6 +208,35 @@ class BlSession extends ChangeNotifier {
     _notify();
   }
 
+  // -- phase 5: the radio gate -------------------------------------------
+
+  /// The REAL system Wi-Fi panel (Android 10+) / direct enable (Android 8-9).
+  void enableWifi() {
+    _try(() => bridge.Engine.openWifiPanel());
+    _notify();
+  }
+
+  /// The REAL system Location page.
+  void enableLocation() {
+    _try(() => bridge.Engine.openLocationSettings());
+    _notify();
+  }
+
+  /// "Check again" on the radio card: native re-checks and answers with
+  /// radio:blocked / radio:ok.
+  void recheckRadios() {
+    _try(() => bridge.Engine.recheckRadios());
+    _notify();
+  }
+
+  /// Dismiss the radio card but keep the session parked in needs_radios;
+  /// the native poller re-raises radio:blocked (and so the card) if a radio
+  /// is still off on the next check.
+  void dismissRadios() {
+    radioBlocked = [];
+    _notify();
+  }
+
   /// The join card was dismissed - bring it back from the joining card.
   void reopenJoinCard() {
     manualExpected = true;
@@ -309,6 +341,39 @@ class BlSession extends ChangeNotifier {
         }
         break;
 
+      // ---- phase 5: radio gate ------------------------------------------
+      case 'radio:blocked':
+        final b = d['blocked'];
+        radioBlocked = b is List ? b.whereType<String>().toList() : [];
+        if (radioBlocked.isNotEmpty) {
+          _toast(radioBlocked.length == 2
+              ? 'Wi-Fi and Location are off'
+              : (radioBlocked.contains('wifi')
+                  ? 'Wi-Fi is off'
+                  : 'Location is off'));
+        }
+        break;
+
+      case 'radio:ok':
+        if (radioBlocked.isNotEmpty) {
+          radioBlocked = [];
+          p2pIssue = null;
+          _toast('Radios ready — searching…');
+        }
+        break;
+
+      case 'p2p:unavailable':
+        // Discovery honestly failed (radios off / busy). No dead silence:
+        // surface it so the user can fix the radio instead of staring at an
+        // empty radar.
+        p2pIssue = Map<String, dynamic>.from(d);
+        _toast('Nearby search failed — Wi-Fi and Location must be on');
+        break;
+
+      case 'p2p:connect_failed':
+        _toast('Couldn’t reach that device — pick another');
+        break;
+
       case 'session:band_unavailable':
         bandIssue = {'kind': 'unavailable', 'reason': d['reason'] ?? ''};
         break;
@@ -353,8 +418,8 @@ class BlSession extends ChangeNotifier {
         final port = (d['port'] as num?)?.toInt();
         if (name.isEmpty || host.isEmpty) break;
         final id = 'lan:$host:$port';
-        final peer = BlPeer(
-            id: id, name: name, kind: 'lan', host: host, port: port);
+        final peer =
+            BlPeer(id: id, name: name, kind: 'lan', host: host, port: port);
         final i = _lanPeersList.indexWhere((p) => p.id == id);
         if (i >= 0) {
           _lanPeersList[i] = peer;
@@ -669,6 +734,8 @@ class BlSession extends ChangeNotifier {
     joinFallback = null;
     joinTimedOut = null;
     permMissing = [];
+    radioBlocked = [];
+    p2pIssue = null;
     bandIssue = null;
     staged = [];
     manifest = null;
@@ -714,15 +781,12 @@ class BlSession extends ChangeNotifier {
 
     edge(_qInvite, invite != null, 'invite', (v) => _qInvite = v);
     edge(_qManifest, manifest != null, 'accept', (v) => _qManifest = v);
-    edge(
-        _qJoin,
-        manualExpected || joinFallback != null,
-        'join',
+    edge(_qJoin, manualExpected || joinFallback != null, 'join',
         (v) => _qJoin = v);
     edge(_qJoinTimeout, joinTimedOut != null, 'joinTimeout',
         (v) => _qJoinTimeout = v);
     edge(_qPerm, permMissing.isNotEmpty, 'perm', (v) => _qPerm = v);
     edge(_qBand, bandIssue != null, 'band', (v) => _qBand = v);
+    edge(_qRadio, radioBlocked.isNotEmpty, 'radio', (v) => _qRadio = v);
   }
 }
-

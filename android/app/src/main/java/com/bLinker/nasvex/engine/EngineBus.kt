@@ -86,11 +86,19 @@ class EngineBus private constructor(val appContext: Context) {
 
     fun dispatchPermissionResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         permManager.dispatchResult(requestCode, permissions, grantResults)
+        // A grant just landed: if discovery was fired before it, re-fire it
+        // now instead of waiting for the slow rediscover cycle (Phase 5).
+        sessionManager.retryDiscovery()
     }
 
     fun dispatchPanelResult(requestCode: Int, resultCode: Int, data: Intent?) {
         sessionManager.join.onPanelResult(requestCode, resultCode, data)
         pickerManager.onPanelResult(requestCode, resultCode, data)
+    }
+
+    /** MainActivity.onResume: coming back from a radio panel = re-check now. */
+    fun onAppResumed() {
+        sessionManager.onAppResumed()
     }
 
     companion object {
@@ -131,6 +139,13 @@ class EngineBus private constructor(val appContext: Context) {
             bus.on("perms.state") { _, result -> result.success(perms.state().toString()) }
             bus.on("perms.request") { _, result -> perms.requestSystemPermissions(); result.success(null) }
             bus.on("perms.openSettings") { _, result -> perms.openSystemAppSettings(); result.success(null) }
+
+            // ---- phase 5: radio gate -------------------------------------
+            // Real Wi-Fi / Location state + the REAL system enable paths.
+            bus.on("radio.state") { _, result -> result.success(session.radio.state().toString()) }
+            bus.on("radio.wifi.enable") { _, result -> session.radio.openWifiPanel(); result.success(null) }
+            bus.on("radio.location.enable") { _, result -> session.radio.openLocationSettings(); result.success(null) }
+            bus.on("radio.recheck") { _, result -> session.radio.recheck(); result.success(null) }
 
             // ---- identity / diagnostics ------------------------------------
             bus.on("device.name") { _, result -> result.success(Device.name(bus.appContext)) }

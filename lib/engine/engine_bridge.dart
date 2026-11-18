@@ -54,6 +54,11 @@
 //   -- phase 4 ----------------------------------------------------------
 //   picker:result{files:[{uri,name,size}]}   -> sender stages + starts
 //   picker:cancelled{reason?}                -> back to idle (or keep link)
+//   -- phase 5: radio gate ------------------------------------------------
+//   radio:blocked{blocked:["wifi"|"location"],wifiOn,locationOn}
+//        -> bLinker radio card: real system enable paths. The session is
+//           parked in needs_radios until both are on.
+//   radio:ok                                  -> parked session starts now
 
 library;
 
@@ -75,7 +80,8 @@ class HotspotCredentials {
   final int port;
   final String? ip;
 
-  factory HotspotCredentials.from(Map<String, dynamic> j) => HotspotCredentials._(
+  factory HotspotCredentials.from(Map<String, dynamic> j) =>
+      HotspotCredentials._(
         j['ssid'] as String? ?? '',
         j['pass'] as String? ?? '',
         (j['port'] as num?)?.toInt() ?? 58231,
@@ -98,13 +104,14 @@ class Engine {
   static const EventChannel _events = EventChannel('bLinker/engine/events');
 
   /// Broadcast of every native engine event.
-  static final Stream<EngineEvent> events = _events
-      .receiveBroadcastStream()
-      .map<EngineEvent>((raw) {
+  static final Stream<EngineEvent> events =
+      _events.receiveBroadcastStream().map<EngineEvent>((raw) {
     final map = jsonDecode(raw as String) as Map<String, dynamic>;
     return EngineEvent(
       map['type'] as String,
-      map['data'] == null ? null : Map<String, dynamic>.from(map['data'] as Map),
+      map['data'] == null
+          ? null
+          : Map<String, dynamic>.from(map['data'] as Map),
     );
   });
 
@@ -113,17 +120,38 @@ class Engine {
 
   // -- permissions (system card: untouched, never replicated) ----------------
   static Future<Map<String, dynamic>> permissionState() async =>
-      Map<String, dynamic>.from(jsonDecode(await _call('perms.state') as String) as Map);
+      Map<String, dynamic>.from(
+          jsonDecode(await _call('perms.state') as String) as Map);
 
   static Future<void> requestPermissions() => _call('perms.request');
   static Future<void> openAppSettings() => _call('perms.openSettings');
 
+  // -- phase 5: radio gate -------------------------------------------------
+
+  /// {blocked:["wifi"|"location"], wifiOn:bool, locationOn:bool} - the REAL
+  /// Wi-Fi adapter / Location-services state, not a guess.
+  static Future<Map<String, dynamic>> radioState() async =>
+      Map<String, dynamic>.from(
+          jsonDecode(await _call('radio.state') as String) as Map);
+
+  /// Android 10+: the REAL system Wi-Fi panel. Android 8-9: the adapter is
+  /// enabled directly (allowed for apps below API 29).
+  static Future<void> openWifiPanel() => _call('radio.wifi.enable');
+
+  /// The REAL system Location page (no app can flip that toggle silently).
+  static Future<void> openLocationSettings() => _call('radio.location.enable');
+
+  /// Re-check the radios now; native emits radio:blocked / radio:ok.
+  static Future<void> recheckRadios() => _call('radio.recheck');
+
   // -- identity / diagnostics -------------------------------------------------
-  static Future<String> deviceName() async => await _call('device.name') as String;
+  static Future<String> deviceName() async =>
+      await _call('device.name') as String;
   static Future<void> setDeviceName(String name) =>
       _methods.invokeMethod('device.setName', name);
   static Future<Map<String, dynamic>> hardwareProbe() async =>
-      Map<String, dynamic>.from(jsonDecode(await _call('diag.hardware') as String) as Map);
+      Map<String, dynamic>.from(
+          jsonDecode(await _call('diag.hardware') as String) as Map);
 
   // -- sessions ------------------------------------------------------------------
   /// mode: 'fast' (5GHz) | 'normal' (2.4GHz); awake = the Keep-screen-awake
@@ -136,14 +164,18 @@ class Engine {
       _call('session.startReceiver', {'awake': awake});
   static Future<void> connectPeer(String peerId) =>
       _call('session.p2pConnect', {'peerId': peerId});
-  static Future<void> respondInvite({required bool accept, bool preferNormal = false}) =>
-      _call('session.respondInvite', {'accept': accept, 'preferNormal': preferNormal});
+  static Future<void> respondInvite(
+          {required bool accept, bool preferNormal = false}) =>
+      _call('session.respondInvite',
+          {'accept': accept, 'preferNormal': preferNormal});
   static Future<void> lanConnect(String host, int port) =>
       _call('session.lanConnect', {'host': host, 'port': port});
-  static Future<void> joinManual({required String ssid, required String pass}) =>
+  static Future<void> joinManual(
+          {required String ssid, required String pass}) =>
       _call('session.joinManual', {'ssid': ssid, 'pass': pass});
   static Future<void> joinPanel() => _call('session.joinPanel');
-  static Future<void> switchMode(String mode) => _call('session.switchMode', {'mode': mode});
+  static Future<void> switchMode(String mode) =>
+      _call('session.switchMode', {'mode': mode});
   static Future<void> stopSession() => _call('session.stop');
 
   // -- transfers (phase 3) ---------------------------------------------------
@@ -164,7 +196,8 @@ class Engine {
   /// {publicAccess, allFilesAccessAvailable, sandboxed, saveDir}
   static Future<Map<String, dynamic>> storageState({String? location}) async =>
       Map<String, dynamic>.from(jsonDecode(
-          await _call('storage.state', {'location': location}) as String) as Map);
+              await _call('storage.state', {'location': location}) as String)
+          as Map);
 
   /// Opens the system "All files access" page (real system screen, 11+).
   static Future<void> openAllFilesAccess() => _call('storage.openAllFiles');
@@ -181,12 +214,13 @@ class Engine {
   /// when possible; reason=app_dir means the path is the app's own dir.
   static Future<Map<String, dynamic>> openFolder(String dir) async =>
       Map<String, dynamic>.from(
-          jsonDecode(await _call('folder.open', {'dir': dir}) as String) as Map);
+          jsonDecode(await _call('folder.open', {'dir': dir}) as String)
+              as Map);
 
   /// Deletes every "*.bpart" partial under both possible roots.
   /// Returns {freed, files}.
   static Future<Map<String, dynamic>> clearPartials({String? location}) async =>
       Map<String, dynamic>.from(jsonDecode(
-          await _call('storage.clearPartials', {'location': location}) as String)
-          as Map);
+          await _call('storage.clearPartials', {'location': location})
+              as String) as Map);
 }

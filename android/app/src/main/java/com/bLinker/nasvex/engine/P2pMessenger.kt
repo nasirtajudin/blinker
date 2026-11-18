@@ -78,6 +78,9 @@ class P2pMessenger(private val context: Context, private val bus: EngineBus) : B
     @Volatile var onRejected: (() -> Unit)? = null
     /** Either: exchange failed (timeout / broken link). */
     @Volatile var onError: ((String) -> Unit)? = null
+    /** Sender: the P2P connect to the picked device failed (out of range /
+     *  busy / cancelled by the other side). */
+    @Volatile var onConnectFailed: (() -> Unit)? = null
 
     private var inviteDecision: CompletableFuture<Pair<Boolean, Boolean>>? = null
 
@@ -195,8 +198,19 @@ class P2pMessenger(private val context: Context, private val bus: EngineBus) : B
             override fun onSuccess() { bus.emit("p2p:connecting", null) }
             override fun onFailure(reason: Int) {
                 bus.emit("p2p:connect_failed", JSONObject().put("reason", reason))
+                onConnectFailed?.invoke()
             }
         })
+    }
+
+    /**
+     * Re-fire discovery after a permission grant or a radio restore - the
+     * session may have started before either landed. No-op once a group
+     * formed or after teardown, so it is always safe to call.
+     */
+    fun kick() {
+        if (tornDown || groupFormed) return
+        if (registered) discover() else start(senderMode)
     }
 
     private fun onConnectionInfo(info: WifiP2pInfo) {

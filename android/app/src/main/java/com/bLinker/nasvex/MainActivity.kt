@@ -37,6 +37,9 @@ class MainActivity : FlutterActivity() {
         super.onResume()
         isRunning = true
         requestTileSync()
+        // Back from a Wi-Fi panel / Location settings: re-check the radio
+        // gate so a parked session can start immediately (Phase 5).
+        EngineBus.get()?.onAppResumed()
     }
 
     override fun onPause() {
