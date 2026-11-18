@@ -38,6 +38,19 @@
 //   tcp:listening{port}
 //   wifi:stats{band,freqMhz,linkMbps,ssid}   -> HUD's MEASURED band chip
 //   perm:result{granted,missing,anyPermanentlyDenied}
+//   -- phase 3 ----------------------------------------------------------
+//   transfer:manifest{id,sender{name,sdk,five},count,totalBytes,
+//        files:[{key,name,rel,size}]}        -> bLinker accept card (app UI)
+//   transfer:accepted{id,peer}  transfer:rejected{id}
+//   transfer:progress{id,bytes,totalBytes,filesDone,fileCount,index,name,
+//        bps,etaSec}                         -> HUD progress + speed + ETA
+//   transfer:file_done{id,key,index,name,bytes,ms,bps}
+//   transfer:complete{id,direction,peer,peerAndroid,peer5,
+//        files:[{name,size}],totalBytes,bodyBytes,durationMs,avgBps,
+//        band,linkMbps,dir?,location?}       -> Dart writes BlStore.history
+//   transfer:cancelled{id,direction,reason,bytes,totalBytes,filesDone,
+//        files:[{name,done,size}]?}          -> receiver keeps .bpart partials
+//   transfer:failed{id?,direction,stage,reason}
 
 library;
 
@@ -126,4 +139,27 @@ class Engine {
   static Future<void> joinPanel() => _call('session.joinPanel');
   static Future<void> switchMode(String mode) => _call('session.switchMode', {'mode': mode});
   static Future<void> stopSession() => _call('session.stop');
+
+  // -- transfers (phase 3) ---------------------------------------------------
+  /// Sends a manifest over the established link.
+  /// files: [{uri | path, name, size, rel?}] - uri = SAF content URI from
+  /// the system picker. Call only after session:state == link_connected.
+  static Future<void> sendTransfer(List<Map<String, dynamic>> files) =>
+      _methods.invokeMethod('transfer.send', files);
+
+  /// Receiver's answer to the bLinker accept card. [location] = the
+  /// configured save folder (BlStore.prefs['location']).
+  static Future<void> acceptTransfer({String? location}) =>
+      _call('transfer.accept', {'location': location});
+
+  static Future<void> rejectTransfer() => _call('transfer.reject');
+  static Future<void> cancelTransfer() => _call('transfer.cancel');
+
+  /// {publicAccess, allFilesAccessAvailable, sandboxed, saveDir}
+  static Future<Map<String, dynamic>> storageState({String? location}) async =>
+      Map<String, dynamic>.from(jsonDecode(
+          await _call('storage.state', {'location': location}) as String) as Map);
+
+  /// Opens the system "All files access" page (real system screen, 11+).
+  static Future<void> openAllFilesAccess() => _call('storage.openAllFiles');
 }

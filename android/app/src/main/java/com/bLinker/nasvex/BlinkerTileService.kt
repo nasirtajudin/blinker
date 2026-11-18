@@ -1,4 +1,4 @@
-package com.blinker.nasvex
+package com.bLinker.nasvex
 
 import android.annotation.SuppressLint
 import android.app.PendingIntent
@@ -7,6 +7,11 @@ import android.os.Build
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 
+/**
+ * bLinker quick-settings tile (moved from the old kotlin/ source dir next to
+ * the merged [MainActivity]; behaviour unchanged - Phase 5 gives it the real
+ * "app open = active" session state).
+ */
 class BlinkerTileService : TileService() {
 
     override fun onStartListening() = sync()

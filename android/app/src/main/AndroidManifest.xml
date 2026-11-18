@@ -21,8 +21,20 @@
         android:required="false" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"
         android:required="false" />
+    <!-- SessionService runs with foregroundServiceType=connectedDevice (34+). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.WAKE_LOCK"
         android:required="false" />
+    <!-- Phase 3 receiver storage: direct public-storage writes (needed for
+         pre-allocation + resume). 11+: All-Files access grant (system
+         settings page, opened untouched); 8-10: legacy write grant.
+         Without either, the app's own external dir is used and reported. -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29"
+        android:required="false" />
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        android:required="false"
+        tools:ignore="ScopedStorage" />
     <uses-feature
         android:name="android.hardware.wifi.direct"
         android:required="false" />
@@ -31,11 +43,12 @@
         android:label="bLinker"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
+        android:requestLegacyExternalStorage="true"
         android:enableOnBackInvokedCallback="true"
         tools:targetApi="34">
 
         <activity
-            android:name=".MainActivity"
+            android:name="com.bLinker.nasvex.MainActivity"
             android:exported="true"
             android:launchMode="singleTask"
             android:theme="@style/LaunchTheme"
@@ -51,10 +64,27 @@
             </intent-filter>
         </activity>
 
+        <service
+            android:name="com.bLinker.nasvex.BlinkerTileService"
+            android:exported="true"
+            android:label="bLinker"
+            android:icon="@drawable/ic_tile_flame"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
-        <service android:name=".engine.SessionService" android:exported="false" android:foregroundServiceType="connectedDevice"/>
+        <!-- Full package name on purpose: the gradle namespace is
+             com.blinker.nasvex (lowercase L), a relative ".engine.…"
+             name would resolve to a class that does not exist and
+             startForegroundService() would crash. -->
+        <service
+            android:name="com.bLinker.nasvex.engine.SessionService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
 </application>
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE"/>
 </manifest>

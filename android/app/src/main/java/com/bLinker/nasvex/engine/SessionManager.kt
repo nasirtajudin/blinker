@@ -52,6 +52,9 @@ class SessionManager(private val context: Context, private val bus: EngineBus) {
     private val tcpServer = TcpLink.Server(bus)
     private val tcpClient = TcpLink.Client(bus)
 
+    /** Phase 3 transfer protocol over the established link. */
+    val transfer: TransferManager by lazy { TransferManager(context, bus, this) }
+
     private val h = Handler(Looper.getMainLooper())
     private val wm = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
 
@@ -65,8 +68,12 @@ class SessionManager(private val context: Context, private val bus: EngineBus) {
     private var receiverTimeout: Runnable? = null
     private var statsTick: Runnable? = null
 
-    /** The established link socket; Phase 3 (transfer) attaches here. */
-    val linkSocket: Socket? get() = if (sender) tcpServer.client else tcpClient.socket
+    /**
+     * The established link socket, whichever side owns it:
+     * hotspot method -> sender is the server, LAN method -> sender is the
+     * client. Phase 3 attaches the transfer protocol here.
+     */
+    val linkSocket: Socket? get() = tcpClient.socket ?: tcpServer.client
 
     fun phase(): String = phase.id
 
@@ -162,6 +169,7 @@ class SessionManager(private val context: Context, private val bus: EngineBus) {
 
     fun stop(silent: Boolean = false) {
         active = false
+        transfer.cancel()
         reset()
         releaseLocks()
         stopStats()
@@ -294,6 +302,11 @@ class SessionManager(private val context: Context, private val bus: EngineBus) {
         receiverTimeout = null
         state(Phase.LINK_CONNECTED)
         SessionService.start(context, "Link established")
+        if (!sender) {
+            // Receiver: start the manifest-first protocol on this link.
+            val s = tcpClient.socket ?: tcpServer.client
+            if (s != null) transfer.beginReceiving(s)
+        }
     }
 
     private fun stopLanStack() {

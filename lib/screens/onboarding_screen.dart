@@ -19,6 +19,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   int _step = 0;
   String _probe = 'idle';
   bool _supports5 = false;
+  bool _failed = false;
   late final TextEditingController _name =
       TextEditingController(text: BlStore.name);
 
@@ -46,6 +47,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     setState(() {
       _probe = 'done';
       _supports5 = probe['wifi5ghz'] == true;
+      _failed = probe['probeFailed'] == true;
     });
   }
 
@@ -295,9 +297,11 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     }
     if (_probe == 'done') {
       return Text(
-        _supports5
-            ? 'Your phone supports Fast mode (5GHz)'
-            : 'Your device doesn’t support 5GHz hotspot',
+        _failed
+            ? 'Couldn’t check hardware. Normal is safe.'
+            : _supports5
+                ? 'Your phone supports Fast mode (5GHz)'
+                : 'Your device doesn’t support 5GHz hotspot',
         style: ts(10, color: BlColors.muted),
       );
     }

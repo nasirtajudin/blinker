@@ -168,6 +168,23 @@ class EngineBus private constructor(val appContext: Context) {
             }
             bus.on("session.stop") { _, result -> session.stop(); result.success(null) }
             bus.on("session.state") { _, result -> result.success(session.phase()) }
+
+            // ---- phase 3: transfers + storage -------------------------------
+            // files: [{name, size, rel?, uri? | path?}] - uri = SAF content URI.
+            bus.on("transfer.send") { call, result ->
+                session.transfer.send(call.arguments); result.success(null)
+            }
+            bus.on("transfer.accept") { call, result ->
+                session.transfer.accept(call.argument<String>("location")); result.success(null)
+            }
+            bus.on("transfer.reject") { _, result -> session.transfer.reject(); result.success(null) }
+            bus.on("transfer.cancel") { _, result -> session.transfer.cancel(); result.success(null) }
+            bus.on("storage.state") { call, result ->
+                result.success(session.transfer.storageState(call.argument<String>("location")).toString())
+            }
+            bus.on("storage.openAllFiles") { _, result ->
+                session.transfer.openAllFilesAccess(); result.success(null)
+            }
         }
     }
 }
