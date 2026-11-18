@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../core/theme.dart';
+import '../core/routes.dart';
 import '../data/store.dart';
 import '../widgets/dock.dart';
 import '../widgets/toast.dart';
@@ -9,6 +10,9 @@ import 'diagnostics_screen.dart';
 import 'home_screen.dart';
 import 'settings_screen.dart';
 
+/// The home shell: top bar + radar screen + Send/Receive dock.
+/// Settings, Diagnostics and Transfer details are REAL routes now - the
+/// Android back button pops them back here instead of exiting the app.
 class Shell extends StatefulWidget {
   const Shell({super.key});
   @override
@@ -16,12 +20,27 @@ class Shell extends StatefulWidget {
 }
 
 class _ShellState extends State<Shell> {
-  String _view = 'home';
   bool _historyAll = false;
-  String? _detailId;
-  bool _autoFocusName = false;
 
-  void _go(String v) => setState(() => _view = v);
+  void _openSettings({bool autoFocusName = false}) {
+    blPush(
+      context,
+      BlScreen(
+        child: SettingsScreen(
+          onBack: () => Navigator.of(context).pop(),
+          onDiagnostics: () => blPush(
+            context,
+            BlScreen(
+              child: DiagnosticsScreen(
+                onBack: () => Navigator.of(context).pop(),
+              ),
+            ),
+          ),
+          autoFocusName: autoFocusName,
+        ),
+      ),
+    );
+  }
 
   void _onMode(String mode) {
     BlToast.show(context,
@@ -30,7 +49,6 @@ class _ShellState extends State<Shell> {
 
   @override
   Widget build(BuildContext context) {
-    final isHome = _view == 'home';
     return Scaffold(
       backgroundColor: BlColors.bg,
       body: Column(
@@ -38,64 +56,33 @@ class _ShellState extends State<Shell> {
           BlTopBar(
             name: BlStore.name,
             method: (BlStore.prefs['method'] ?? 'fast') as String,
-            onName: () => setState(() {
-              _autoFocusName = true;
-              _view = 'settings';
-            }),
-            onMethod: () => _go('settings'),
-            onSettings: () => _go('settings'),
+            onName: () => _openSettings(autoFocusName: true),
+            onMethod: () => _openSettings(),
+            onSettings: () => _openSettings(),
           ),
           Expanded(
             child: Stack(
               children: [
-                AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 450),
-                  switchInCurve: const Cubic(0.22, 1, 0.36, 1),
-                  transitionBuilder: (child, anim) => FadeTransition(
-                    opacity: anim,
-                    child: SlideTransition(
-                      position: Tween(
-                              begin: const Offset(0, 0.02),
-                              end: Offset.zero)
-                          .animate(anim),
-                      child: child,
+                HomeScreen(
+                  historyAll: _historyAll,
+                  onHistoryAll: () =>
+                      setState(() => _historyAll = !_historyAll),
+                  onDetail: (id) => blPush(
+                    context,
+                    BlScreen(
+                      child: DetailScreen(
+                        id: id,
+                        onBack: () => Navigator.of(context).pop(),
+                      ),
                     ),
                   ),
-                  child: KeyedSubtree(key: ValueKey(_view), child: _body()),
                 ),
-                if (isHome) BlDock(mode: null, onMode: _onMode),
+                BlDock(mode: null, onMode: _onMode),
               ],
             ),
           ),
         ],
       ),
     );
-  }
-
-  Widget _body() {
-    switch (_view) {
-      case 'settings':
-        return SettingsScreen(
-          onBack: () => setState(() {
-            _autoFocusName = false;
-            _view = 'home';
-          }),
-          onDiagnostics: () => _go('diagnostics'),
-          autoFocusName: _autoFocusName,
-        );
-      case 'diagnostics':
-        return DiagnosticsScreen(onBack: () => _go('settings'));
-      case 'detail':
-        return DetailScreen(id: _detailId, onBack: () => _go('home'));
-      default:
-        return HomeScreen(
-          historyAll: _historyAll,
-          onHistoryAll: () => setState(() => _historyAll = !_historyAll),
-          onDetail: (id) => setState(() {
-            _detailId = id;
-            _view = 'detail';
-          }),
-        );
-    }
   }
 }

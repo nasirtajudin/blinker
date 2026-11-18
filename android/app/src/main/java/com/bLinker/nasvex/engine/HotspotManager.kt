@@ -1,33 +1,38 @@
 package com.bLinker.nasvex.engine
 
-import android.annotation.RequiresApi
 import android.content.Context
 import android.net.wifi.SoftApConfiguration
+import android.net.wifi.WifiConfiguration
 import android.net.wifi.WifiManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import org.json.JSONObject
-import java.security.SecureRandom
-import java.util.concurrent.Executor
-
-/** Cryptographically random, human-typable tokens. */
-object Token {
-    private const val CS = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789"
-    private val rnd = SecureRandom()
-    fun make(n: Int): String = buildString { repeat(n) { append(CS[rnd.nextInt(CS.length)]) } }
-}
 
 /**
- * Sender side of the transport link: a local-only hotspot on the negotiated band.
+ * Sender side of the transport link: a local-only hotspot.
  *
- *  - Android 13+: we own the SSID/passphrase (SoftApConfiguration overload of
- *    startLocalOnlyHotspot), so credentials travel over the Wi-Fi Direct
- *    messenger BEFORE the hotspot starts. The user never types anything.
- *  - Android 8-12: the system generates random credentials at hotspot start;
- *    they are unknown during the P2P exchange -> manual code path.
+ * PUBLIC-API REALITY (verified against the SDK android.jar, API 26-35):
+ * third-party apps cannot preset the SSID/passphrase or the band of a
+ * local-only hotspot - SoftApConfiguration's builder/band constants and the
+ * config-taking hotspot overloads are not part of the public SDK on ANY
+ * Android version. The system generates a random SSID + WPA2 passphrase the
+ * moment the hotspot starts, on every version.
  *
- * Must start only AFTER the Wi-Fi Direct link is torn down: most radios can't
- * run P2P and AP together, and the 5GHz request only takes effect once the
- * radio is free.
+ * So the pairing flow on every Android version is:
+ *   1. Wi-Fi Direct carries invite -> accept/reject (+ band preference) ->
+ *      a "manual" join instruction -> ack (see [P2pMessenger]).
+ *   2. Both sides tear the P2P link down (most radios cannot run P2P and AP
+ *      together, and the radio must be free for the hotspot anyway).
+ *   3. The sender starts the hotspot, reads the system-generated
+ *      credentials back from the reservation and shows them on screen
+ *      (session:manual_code). The receiver joins with them - one typed
+ *      entry, then WifiNetworkSuggestion / system panel take over
+ *      (see [JoinManager]).
+ *
+ * [fast] is the 5GHz preference: the system honours it where the radio and
+ * region allow; the HUD always shows the band MEASURED by WifiInfo
+ * (wifi:stats), never the requested one.
  */
 class HotspotManager(private val context: Context, private val bus: EngineBus) {
 
@@ -43,72 +48,60 @@ class HotspotManager(private val context: Context, private val bus: EngineBus) {
 
     private val wm = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
     private var reservation: WifiManager.LocalOnlyHotspotReservation? = null
-    private val direct: Executor = Executor { it.run() }
 
-    /** Pre-generated credentials for Android 13+ (sent over the P2P messenger). */
-    fun generateCreds(): Creds = Creds("bLinker-" + Token.make(4), Token.make(18), TcpLink.PORT)
-
-    fun start(creds: Creds?, fast: Boolean) {
-        if (creds != null && Build.VERSION.SDK_INT >= 33) startCustom(creds, fast)
-        else startLegacy()
-    }
-
-    @RequiresApi(33)
-    private fun startCustom(creds: Creds, fast: Boolean) {
-        val builder = SoftApConfiguration.Builder()
-            .setSsid(creds.ssid)
-            .setPassphrase(creds.pass, SoftApConfiguration.SECURITY_TYPE_WPA2_PSK)
-        builder.setBand(if (fast) SoftApConfiguration.BAND_5GHZ else SoftApConfiguration.BAND_2GHZ)
-        wm.startLocalOnlyHotspot(builder.build(), direct, object : WifiManager.LocalOnlyHotspotCallback() {
+    /**
+     * Start the local-only hotspot. The (callback, handler) overload is the
+     * ONLY one in the public SDK; it exists since API 26 (= our minSdk).
+     */
+    fun start(fast: Boolean) {
+        wm.startLocalOnlyHotspot(object : WifiManager.LocalOnlyHotspotCallback() {
             override fun onStarted(r: WifiManager.LocalOnlyHotspotReservation) {
                 reservation = r
-                val eff = r.softApConfiguration
-                val finalCreds = if (!eff.ssid.isNullOrBlank() && !eff.passphrase.isNullOrBlank())
-                    Creds(eff.ssid, eff.passphrase, creds.port) else creds
-                bus.emit("hotspot:started", finalCreds.toJson(Net.senderApIpv4()))
-                onStarted?.invoke(finalCreds)
-            }
-            override fun onFailed(reason: Int) {
-                val name = reasonName(reason)
-                bus.emit("hotspot:failed", JSONObject().put("reason", name).put("fast", fast))
-                onFailed?.invoke(name)
-            }
-            override fun onStopped() { bus.emit("hotspot:stopped", null) }
-        })
-    }
-
-    @Suppress("DEPRECATION")
-    private fun startLegacy() {
-        wm.startLocalOnlyHotspot(direct, object : WifiManager.LocalOnlyHotspotCallback() {
-            override fun onStarted(r: WifiManager.LocalOnlyHotspotReservation) {
-                reservation = r
-                val ssid: String?
-                val pass: String?
-                if (Build.VERSION.SDK_INT >= 30) {
-                    val c = r.softApConfiguration
-                    ssid = Net.cleanSsid(c?.ssid)
-                    pass = c?.passphrase
-                } else {
-                    val c = r.wifiConfiguration
-                    ssid = Net.cleanSsid(c?.ssid)
-                    pass = c?.preSharedKey
-                }
-                if (ssid.isNullOrBlank() || pass.isNullOrBlank()) {
-                    bus.emit("hotspot:failed", JSONObject().put("reason", "no_credentials"))
+                val creds = readCreds(r)
+                if (creds == null) {
+                    bus.emit("hotspot:failed",
+                        JSONObject().put("reason", "no_credentials").put("fast", fast))
                     onFailed?.invoke("no_credentials")
-                } else {
-                    val creds = Creds(ssid, pass, TcpLink.PORT)
-                    bus.emit("hotspot:started", creds.toJson(Net.senderApIpv4()))
-                    onStarted?.invoke(creds)
+                    return
                 }
+                bus.emit("hotspot:started", creds.toJson(Net.senderApIpv4()))
+                onStarted?.invoke(creds)
             }
+
             override fun onFailed(reason: Int) {
                 val name = reasonName(reason)
-                bus.emit("hotspot:failed", JSONObject().put("reason", name))
+                bus.emit("hotspot:failed",
+                    JSONObject().put("reason", name).put("fast", fast))
                 onFailed?.invoke(name)
             }
-            override fun onStopped() { bus.emit("hotspot:stopped", null) }
-        })
+
+            override fun onStopped() {
+                reservation = null
+                bus.emit("hotspot:stopped", null)
+            }
+        }, Handler(Looper.getMainLooper()))
+    }
+
+    /**
+     * The system-generated credentials of a live hotspot reservation.
+     * API 30+: SoftApConfiguration; API 26-29: the deprecated WifiConfiguration.
+     */
+    private fun readCreds(r: WifiManager.LocalOnlyHotspotReservation): Creds? {
+        val ssid: String?
+        val pass: String?
+        if (Build.VERSION.SDK_INT >= 30) {
+            val c: SoftApConfiguration? = r.softApConfiguration
+            ssid = Net.cleanSsid(c?.ssid)
+            pass = c?.passphrase
+        } else {
+            @Suppress("DEPRECATION")
+            val c: WifiConfiguration? = r.wifiConfiguration
+            ssid = Net.cleanSsid(c?.SSID)
+            @Suppress("DEPRECATION")
+            pass = c?.preSharedKey
+        }
+        if (ssid.isNullOrBlank() || pass.isNullOrBlank()) return null
+        return Creds(ssid, pass, TcpLink.PORT)
     }
 
     private fun reasonName(reason: Int): String = when (reason) {

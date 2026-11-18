@@ -4,10 +4,12 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.net.wifi.WifiP2pConfig
-import android.net.wifi.WifiP2pDnsSdServiceInfo
-import android.net.wifi.WifiP2pInfo
-import android.net.wifi.WifiP2pManager
+import android.net.wifi.p2p.WifiP2pConfig
+import android.net.wifi.p2p.WifiP2pInfo
+import android.net.wifi.p2p.WifiP2pManager
+import android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceInfo
+import android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceRequest
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -26,9 +28,13 @@ import java.util.concurrent.TimeUnit
 /**
  * Wi-Fi Direct is a MESSENGER ONLY.
  *
- * It carries: invite -> accept/reject (+ band preference) -> hotspot
- * credentials -> ack. Then both sides tear the P2P link down so the radio is
- * free for the local-only hotspot. File data NEVER flows over Wi-Fi Direct.
+ * It carries: invite -> accept/reject (+ band preference) -> the join
+ * instruction ("manual": join the sender's hotspot and read the code from
+ * its screen) -> ack. Then both sides tear the P2P link down so the radio
+ * is free for the local-only hotspot. File data NEVER flows over Wi-Fi
+ * Direct. (Public-API reality: hotspot credentials cannot be preset by any
+ * app, so they never travel over this link - the sender's screen and the
+ * receiver's one-time typed entry carry them instead.)
  *
  * Either side may end up group owner; the non-owner connects to the owner on
  * CTRL_PORT. The sender always speaks first (INVITE frame). Devices that
@@ -59,12 +65,10 @@ class P2pMessenger(private val context: Context, private val bus: EngineBus) : B
 
     /** Sender: invite advertises this band preference. */
     @Volatile var invitedFast = true
-    /** Sender: creds JSON handed over (Android 13+), generated before the hotspot starts. */
-    @Volatile var credsForExchange: JSONObject? = null
 
     /** Receiver: raw invite for the bLinker invite card (app UI, never system-styled). */
     @Volatile var onInvite: ((JSONObject) -> Unit)? = null
-    /** Receiver: credentials received (null => manual code path). */
+    /** Receiver: join instruction received - always the manual path now. */
     @Volatile var onCredsReceived: ((JSONObject?) -> Unit)? = null
     /** Sender: receiver ACKed; P2P already torn down -> bring up the hotspot. */
     @Volatile var onHandshakeComplete: (() -> Unit)? = null
@@ -86,10 +90,17 @@ class P2pMessenger(private val context: Context, private val bus: EngineBus) : B
             channel = pm.initialize(context.applicationContext, Looper.getMainLooper(), null)
         }
         if (!registered) {
-            context.registerReceiver(this, IntentFilter().apply {
+            val filter = IntentFilter().apply {
                 addAction(WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION)
                 addAction(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION)
-            })
+            }
+            // WIFI_P2P_* are protected system broadcasts, so the receiver
+            // works with the flag on 33+ and without it below.
+            if (Build.VERSION.SDK_INT >= 33) {
+                context.registerReceiver(this, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                context.registerReceiver(this, filter)
+            }
             registered = true
         }
         if (sender) listenForBlinkerServices() else advertiseBlinkerService()
@@ -130,14 +141,29 @@ class P2pMessenger(private val context: Context, private val bus: EngineBus) : B
         })
     }
 
-    /** Sender: remember which discovered devices answered as bLinker. */
+    /**
+     * Sender: discover which of the found devices answers as bLinker.
+     * DNS-SD responses only arrive after a service REQUEST is registered,
+     * so we add one for the _blinker._tcp service alongside the listener.
+     */
     private fun listenForBlinkerServices() {
         val ch = channel ?: return
-        pm.setDnsSdResponseListeners(ch, { serviceInfo, srcDevice ->
-            if (serviceInfo.serviceType?.contains("blink") == true && srcDevice != null) {
-                synchronized(blinkerPeers) { blinkerPeers.add(srcDevice.deviceAddress) }
-            }
-        }, null)
+        pm.setDnsSdResponseListeners(ch,
+            { instanceName, registrationType, srcDevice ->
+                val hit = (registrationType ?: "").contains("blinker") ||
+                    (instanceName ?: "").contains("blinker", ignoreCase = true)
+                if (hit && srcDevice != null) {
+                    synchronized(blinkerPeers) { blinkerPeers.add(srcDevice.deviceAddress) }
+                }
+            },
+            null)
+        pm.addServiceRequest(ch, WifiP2pDnsSdServiceRequest.newInstance(),
+            object : WifiP2pManager.ActionListener {
+                override fun onSuccess() {}
+                override fun onFailure(reason: Int) {
+                    bus.emit("p2p:unavailable", JSONObject().put("reason", reason))
+                }
+            })
     }
 
     override fun onReceive(ctx: Context, intent: Intent) {
@@ -251,9 +277,9 @@ class P2pMessenger(private val context: Context, private val bus: EngineBus) : B
                 .put("fast", invitedFast))
             when (recv(INVITE_TIMEOUT_MS.toInt()).optString("type")) {
                 "accept" -> {
-                    val creds = credsForExchange
-                    if (creds != null) send(creds.put("type", "creds"))
-                    else send(JSONObject().put("type", "manual").put("port", TcpLink.PORT))
+                    // Credentials are system-generated when the hotspot starts
+                    // (no public API presets them) -> manual join instruction.
+                    send(JSONObject().put("type", "manual").put("port", TcpLink.PORT))
                     if (recv(ACK_TIMEOUT_MS.toInt()).optString("type") == "ack") {
                         teardown()
                         onHandshakeComplete?.invoke()
@@ -289,15 +315,10 @@ class P2pMessenger(private val context: Context, private val bus: EngineBus) : B
             send(JSONObject().put("type", if (preferNormal) "accept_normal" else "accept"))
             val msg = recv(ACK_TIMEOUT_MS.toInt())
             when (msg.optString("type")) {
-                "creds" -> {
-                    send(JSONObject().put("type", "ack"))
-                    teardown()
-                    onCredsReceived?.invoke(msg)
-                }
                 "manual" -> {
                     send(JSONObject().put("type", "ack"))
                     teardown()
-                    onCredsReceived?.invoke(null)   // manual code path
+                    onCredsReceived?.invoke(null)   // manual join path
                 }
                 else -> teardown()
             }
@@ -319,6 +340,7 @@ class P2pMessenger(private val context: Context, private val bus: EngineBus) : B
         if (ch != null) {
             runCatching { pm.stopPeerDiscovery(ch, null) }
             runCatching { pm.clearLocalServices(ch, null) }
+            runCatching { pm.clearServiceRequests(ch, null) }
             runCatching { pm.removeGroup(ch, null) }
         }
         if (registered) {

@@ -131,7 +131,7 @@ class EngineBus private constructor(val appContext: Context) {
             // ---- identity / diagnostics ------------------------------------
             bus.on("device.name") { _, result -> result.success(Device.name(bus.appContext)) }
             bus.on("device.setName") { call, result ->
-                Device.setName(bus.appContext, call.arguments<String>() ?: ""); result.success(null)
+                Device.setName(bus.appContext, call.arguments as? String ?: ""); result.success(null)
             }
             bus.on("diag.hardware") { _, result -> result.success(session.hardwareProbe().toString()) }
 

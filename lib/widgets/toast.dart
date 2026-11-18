@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 import '../core/theme.dart';
 
+/// bLinker's in-app notification bubble. Rendered via the root Overlay, so
+/// it must carry its own [Material] (transparent): overlay subtrees have no
+/// Material ancestor and text would otherwise render with Flutter's debug
+/// fallback style (yellow underlines).
 class BlToast {
   static OverlayEntry? _entry;
   static void show(BuildContext context, String text) {
@@ -28,23 +32,27 @@ class _ToastBubble extends StatelessWidget {
       child: Padding(
         padding: EdgeInsets.only(bottom: 125 + pad.bottom),
         child: IgnorePointer(
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-            constraints: BoxConstraints(
-              maxWidth: MediaQuery.of(context).size.width - 48,
+          child: Material(
+            type: MaterialType.transparency,
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+              constraints: BoxConstraints(
+                maxWidth: MediaQuery.of(context).size.width - 48,
+              ),
+              decoration: BoxDecoration(
+                color: const Color(0xFF45323E),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0x14FFFFFF)),
+                boxShadow: const [
+                  BoxShadow(
+                      color: Color(0x55000000),
+                      blurRadius: 20,
+                      offset: Offset(0, 8)),
+                ],
+              ),
+              child: Text(text, style: ts(11), textAlign: TextAlign.center),
             ),
-            decoration: BoxDecoration(
-              color: const Color(0xFF45323E),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: const Color(0x14FFFFFF)),
-              boxShadow: const [
-                BoxShadow(
-                    color: Color(0x55000000),
-                    blurRadius: 20,
-                    offset: Offset(0, 8)),
-              ],
-            ),
-            child: Text(text, style: ts(11), textAlign: TextAlign.center),
           ),
         ),
       ),

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../core/routes.dart';
 import '../core/theme.dart';
 import '../core/icons.dart';
 import '../data/store.dart';
@@ -44,7 +45,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     if (!mounted) return;
     setState(() {
       _probe = 'done';
-      _supports5 = probe['supports5GHz'] == true;
+      _supports5 = probe['wifi5ghz'] == true;
     });
   }
 
@@ -56,7 +57,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   void _finish() {
     BlStore.set('onboard', true);
     Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const Shell()));
+        BlPageRoute(builder: (_) => const Shell()));
   }
 
   InputDecoration _fieldDeco() => InputDecoration(

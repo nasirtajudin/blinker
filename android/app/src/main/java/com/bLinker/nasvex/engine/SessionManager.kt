@@ -27,7 +27,6 @@ import java.net.Socket
 class SessionManager(private val context: Context, private val bus: EngineBus) {
 
     companion object {
-        const val RECEIVER_TIMEOUT_MS = 30_000L
         const val MANUAL_TIMEOUT_MS = 120_000L
     }
 
@@ -61,7 +60,6 @@ class SessionManager(private val context: Context, private val bus: EngineBus) {
     @Volatile private var sender = false
     @Volatile private var phase = Phase.IDLE
     @Volatile private var creds: HotspotManager.Creds? = null
-    @Volatile private var manualMode = false
 
     private var wifiLock: WifiManager.WifiLock? = null
     private var receiverTimeout: Runnable? = null
@@ -82,13 +80,13 @@ class SessionManager(private val context: Context, private val bus: EngineBus) {
     fun startSenderHotspot(mode: String) {
         sender = true
         fast = mode != "normal"
-        manualMode = Build.VERSION.SDK_INT < 33
         begin()
         checkPerms()
-        // Android 13+: credentials exist before the hotspot does, so they can
-        // travel over the P2P messenger. 8-12: system generates them later.
-        creds = if (Build.VERSION.SDK_INT >= 33) hotspot.generateCreds() else null
-        p2p.credsForExchange = creds?.toJson(null)
+        // Public-API reality: no app can preset hotspot credentials on ANY
+        // Android version, so the P2P exchange always carries a "manual"
+        // join instruction; the system-generated SSID/pass arrive with
+        // session:manual_code once the hotspot is up.
+        creds = null
         p2p.invitedFast = fast
         state(Phase.P2P_SEARCH)
         p2p.start(sender = true)
@@ -215,26 +213,18 @@ class SessionManager(private val context: Context, private val bus: EngineBus) {
             val enriched = invite.put("bandOk", !invite.optBoolean("fast") || wm.is5GHzBandSupported)
             bus.emit("invite:received", enriched)
         }
-        p2p.onCredsReceived = { json ->
-            if (json == null) {
-                // Android 8-12: sender shows a code, receiver enters it.
-                stopLanStack()
-                state(Phase.JOINING)
-                bus.emit("session:manual_expected", null)
-            } else {
-                val ssid = json.optString("ssid")
-                val pass = json.optString("pass")
-                val port = json.optInt("port", TcpLink.PORT)
-                creds = HotspotManager.Creds(ssid, pass, port)
-                stopLanStack()
-                state(Phase.JOINING)
-                join.join(creds!!) { gateway -> connectToSender(gateway, json) }
-            }
+        p2p.onCredsReceived = {
+            // Manual path (universal): the sender's screen shows the code,
+            // the receiver joins with it - typed once, then the suggestion /
+            // system panel take over.
+            stopLanStack()
+            state(Phase.JOINING)
+            bus.emit("session:manual_expected", null)
         }
         p2p.onHandshakeComplete = {
             // P2P is closed and the radio is free - now bring up the hotspot.
             state(Phase.HOTSPOT_STARTING)
-            hotspot.start(creds, fast)
+            hotspot.start(fast)
         }
         p2p.onDowngradeRequested = {
             // Receiver hardware can't do 5GHz: sender gets the
@@ -247,18 +237,13 @@ class SessionManager(private val context: Context, private val bus: EngineBus) {
 
     private fun wireHotspotCallbacks() {
         hotspot.onStarted = { startedCreds ->
-            val pre = creds
             creds = startedCreds
-            // If the system altered our pre-shared credentials (shouldn't on
-            // 13+, can on some OEMs), fall back to the code path.
-            if (pre != null && (pre.ssid != startedCreds.ssid || pre.pass != startedCreds.pass)) {
-                manualMode = true
-            }
-            if (manualMode) {
-                bus.emit("session:manual_code", JSONObject()
-                    .put("ssid", startedCreds.ssid)
-                    .put("pass", startedCreds.pass))
-            }
+            // The system chose the SSID/passphrase (no app can preset them):
+            // surface them so the receiver can join. bLinker card, never a
+            // system look-alike.
+            bus.emit("session:manual_code", JSONObject()
+                .put("ssid", startedCreds.ssid)
+                .put("pass", startedCreds.pass))
             state(Phase.WAITING_RECEIVER)
             SessionService.start(context, "Waiting for the receiver")
             tcpServer.listen(
@@ -270,7 +255,7 @@ class SessionManager(private val context: Context, private val bus: EngineBus) {
                 }
             }
             receiverTimeout = r
-            h.postDelayed(r, if (manualMode) MANUAL_TIMEOUT_MS else RECEIVER_TIMEOUT_MS)
+            h.postDelayed(r, MANUAL_TIMEOUT_MS)
         }
         hotspot.onFailed = { reason ->
             if (fast && (reason == "no_channel" || reason == "generic")) {
@@ -378,7 +363,7 @@ class SessionManager(private val context: Context, private val bus: EngineBus) {
             .put("wifi5ghz", wm.is5GHzBandSupported)
             .put("wifiDirect", context.packageManager.hasSystemFeature(PackageManager.FEATURE_WIFI_DIRECT))
             .put("networkSuggestions", Build.VERSION.SDK_INT >= 29)
-            .put("customHotspotCredentials", Build.VERSION.SDK_INT >= 33)
+            .put("customHotspotCredentials", false)
             .put("locationServicesOn", locationOn)
             .put("measuredBand", stats?.band ?: JSONObject.NULL)
             .put("measuredLinkMbps", stats?.linkMbps ?: JSONObject.NULL)

@@ -3,13 +3,18 @@ import 'package:flutter/material.dart';
 import '../core/theme.dart';
 import 'buttons.dart';
 
+/// bLinker's own modal - bottom-anchored card over a blurred scrim.
+/// FAST: 200 ms in / 150 ms out. The [Material] wrapper (transparent) gives
+/// every [Text]/[TextField] inside a proper text style - without it Flutter
+/// falls back to the debug default style and draws yellow underlines under
+/// the text (this only affected overlays: modals + toasts).
 Future<T?> showBlModal<T>(BuildContext context, WidgetBuilder builder) {
   return showGeneralDialog<T>(
     context: context,
     barrierDismissible: true,
     barrierLabel: 'Dismiss',
     barrierColor: Colors.transparent,
-    transitionDuration: const Duration(milliseconds: 350),
+    transitionDuration: const Duration(milliseconds: 200),
     pageBuilder: (_, __, ___) => const SizedBox.shrink(),
     transitionBuilder: (ctx, anim, __, ___) {
       final curved = CurvedAnimation(
@@ -38,30 +43,33 @@ class _ModalScope extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final mq = MediaQuery.of(context);
-    return GestureDetector(
-      onTap: () => Navigator.of(context).pop(),
-      child: Container(
-        color: const Color(0x8A000000),
-        padding: EdgeInsets.fromLTRB(
-            14, 20, 14, 20 + mq.viewInsets.bottom),
-        alignment: Alignment.bottomCenter,
-        child: GestureDetector(
-          onTap: () {},
-          child: Container(
-            constraints: const BoxConstraints(maxWidth: 430, maxHeight: 600),
-            padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              color: const Color(0xFF211A20),
-              borderRadius: BorderRadius.circular(29),
-              border: Border.all(color: const Color(0x14FFFFFF)),
-              boxShadow: const [
-                BoxShadow(
-                    color: Color(0x90000000),
-                    blurRadius: 90,
-                    offset: Offset(0, 30)),
-              ],
+    return Material(
+      type: MaterialType.transparency,
+      child: GestureDetector(
+        onTap: () => Navigator.of(context).pop(),
+        child: Container(
+          color: const Color(0x8A000000),
+          padding: EdgeInsets.fromLTRB(
+              14, 20, 14, 20 + mq.viewInsets.bottom),
+          alignment: Alignment.bottomCenter,
+          child: GestureDetector(
+            onTap: () {},
+            child: Container(
+              constraints: const BoxConstraints(maxWidth: 430, maxHeight: 600),
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: const Color(0xFF211A20),
+                borderRadius: BorderRadius.circular(29),
+                border: Border.all(color: const Color(0x14FFFFFF)),
+                boxShadow: const [
+                  BoxShadow(
+                      color: Color(0x90000000),
+                      blurRadius: 90,
+                      offset: Offset(0, 30)),
+                ],
+              ),
+              child: SingleChildScrollView(child: child),
             ),
-            child: SingleChildScrollView(child: child),
           ),
         ),
       ),
